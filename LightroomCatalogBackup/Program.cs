@@ -1,5 +1,6 @@
 ﻿using System;
 using System.IO;
+using System.IO.Compression;
 using System.Security.Cryptography;
 using System.Text.Json;
 using Serilog;
@@ -10,6 +11,7 @@ namespace LightroomCatalogBackup
     {
         private static readonly SHA256 _sha256 = SHA256.Create();
         private static readonly JsonSerializerOptions _jsonSerializerOptions = new() { WriteIndented = true };
+        private static readonly string _baseDirectory = AppDomain.CurrentDomain.BaseDirectory;
 
         private static IBackupSettings _backupSettings;
 
@@ -17,8 +19,8 @@ namespace LightroomCatalogBackup
         {
             ConfigureLogger();
 
-            OpenSettings();
-            BackupProcedure();
+            ImportSettings();
+            StartBackupProcedure();
 
             Exit(0);
         }
@@ -27,7 +29,7 @@ namespace LightroomCatalogBackup
         {
             Log.Logger = new LoggerConfiguration()
                 .WriteTo.Console()
-                .WriteTo.File(@"logs\log-.txt",
+                .WriteTo.File(Path.Join(_baseDirectory, @"logs\log-.txt"),
                     rollingInterval: RollingInterval.Year,
                     outputTemplate: "{Timestamp:yyyy-MM-dd HH:mm:ss.fff zzz} [{Level:u3}] {Message:lj}{NewLine}{Exception}")
                 .CreateLogger();
@@ -39,16 +41,18 @@ namespace LightroomCatalogBackup
             Environment.Exit(exitCode);
         }
 
-        private static void OpenSettings()
+        private static void ImportSettings()
         {
-            if (!File.Exists(@"config.json"))
+            string pathToConfig = Path.Join(_baseDirectory, @"config.json");
+
+            if (!File.Exists(pathToConfig))
             {
                 Log.Fatal("config.json not found.");
                 Exit(-1);
             }
 
             Log.Information("Loading config.json.");
-            using (StreamReader reader = new(@"config.json"))
+            using (StreamReader reader = new(pathToConfig))
             {
                 try
                 {
@@ -69,76 +73,191 @@ namespace LightroomCatalogBackup
             }
         }
 
-        private static void BackupProcedure()
+        private static void StartBackupProcedure()
         {
             Log.Information("Starting backup procedure.");
 
             foreach (var catalog in _backupSettings.Catalogs)
             {
-                string destinationFile = "";
-
-                if (catalog.HasCustomBackupDirectory)
-                    destinationFile = Path.Combine(catalog.CustomBackupDirectory, catalog.FileName);
-                else
-                    destinationFile = Path.Combine(_backupSettings.GlobalBackupDirectory, catalog.FileName);
+                string destinationFile = GetDestinationFile(catalog);
 
                 if (File.Exists(destinationFile))
                 {
-                    if (GetHashSha256(destinationFile) == GetHashSha256(catalog.PathToFile))
+                    var hashResult = CompareHash(catalog.PathToFile, destinationFile);
+                    if (hashResult == CompareResult.Zero)
                     {
                         Log.Information($"Skipping { catalog.FileName }, hash identical.");
                         // skip
                     }
-                    else
+                    else if (hashResult == CompareResult.Negative)
                     {
-                        var catalogInfo = new FileInfo(catalog.PathToFile);
-                        var destinationInfo = new FileInfo(destinationFile);
-
-                        if (catalogInfo.LastWriteTimeUtc.CompareTo(destinationInfo.LastWriteTimeUtc) >= 0)
+                        var fileDateResult = CompareFileDate(catalog.PathToFile, destinationFile);
+                        if (fileDateResult == CompareResult.Zero || fileDateResult == CompareResult.Positive)
                         {
-                            catalogInfo = null;
-                            destinationInfo = null;
-
-                            try
-                            {
-                                Log.Information($"Copying { catalog.FileName }, newer.");
-                                File.Copy(catalog.PathToFile, destinationFile, overwrite: true);
-                            }
-                            catch (Exception)
-                            {
-                                Log.Error($"Error while copying { catalog.FileName }.");
-                            }
+                            BackupCatalog(catalog, destinationFile);
                         }
-                        else
+                        else if (fileDateResult == CompareResult.Negative)
                         {
                             Log.Information($"Skipping { catalog.FileName }, older.");
                             // skip
                         }
+                        else
+                        {
+                            Log.Information($"{ catalog.FileName } not found in zip archive.");
+                            BackupCatalog(catalog, destinationFile);
+                        }
+                    }
+                    else
+                    {
+                        Log.Information($"{ catalog.FileName } not found in zip archive.");
+                        BackupCatalog(catalog, destinationFile);
                     }
                 }
                 else
                 {
-                    try
-                    {
-                        Log.Information($"Copying { catalog.FileName }, new.");
-                        File.Copy(catalog.PathToFile, destinationFile);
-                    }
-                    catch (Exception)
-                    {
-                        Log.Error($"Error while copying { catalog.FileName }.");
-                    }
+                    BackupCatalog(catalog, destinationFile);
                 }
             }
 
             Log.Information("Backup finished.");
         }
 
-        private static string GetHashSha256(string filename)
+        private static string GetDestinationFile(ILightroomCatalog lightroomCatalog)
         {
-            using (FileStream stream = File.OpenRead(filename))
+            Log.Debug("Finding destination file.");
+
+            if (_backupSettings.Compress)
             {
-                return BitConverter.ToString(_sha256.ComputeHash(stream)).Replace("-", "").ToLowerInvariant();
+                if (lightroomCatalog.HasCustomBackupDirectory)
+                    return Path.Combine(lightroomCatalog.CustomBackupDirectory, Path.ChangeExtension(lightroomCatalog.FileName, ".zip"));
+                else
+                    return Path.Combine(_backupSettings.GlobalBackupDirectory, Path.ChangeExtension(lightroomCatalog.FileName, ".zip"));
+            }
+            else if (lightroomCatalog.HasCustomBackupDirectory)
+                return Path.Combine(lightroomCatalog.CustomBackupDirectory, lightroomCatalog.FileName);
+            else
+                return Path.Combine(_backupSettings.GlobalBackupDirectory, lightroomCatalog.FileName);
+        }
+
+        private static CompareResult CompareHash(string catalog, string destination)
+        {
+            if (_backupSettings.Compress)
+            {
+                using ZipArchive archive = ZipFile.OpenRead(destination);
+                foreach (var item in archive.Entries)
+                {
+                    if (item.Name == Path.GetFileName(catalog))
+                    {
+                        if (GetHashSha256(catalog) == GetHashSha256(item.Open()))
+                        {
+                            return CompareResult.Zero;
+                        }
+                        else
+                        {
+                            return CompareResult.Negative;
+                        }
+                    }
+                }
+            }
+            else
+            {
+                if (GetHashSha256(catalog) == GetHashSha256(destination))
+                {
+                    return CompareResult.Zero;
+                }
+                else
+                {
+                    return CompareResult.Negative;
+                }
+            }
+
+            return CompareResult.NotFound;
+        }
+
+        private static CompareResult CompareFileDate(string catalog, string destination)
+        {
+            if (_backupSettings.Compress)
+            {
+                using ZipArchive archive = ZipFile.OpenRead(destination);
+                foreach (var item in archive.Entries)
+                {
+                    if (item.Name == Path.GetFileName(catalog))
+                    {
+                        int result = new FileInfo(catalog).LastWriteTimeUtc.CompareTo(item.LastWriteTime.DateTime.ToUniversalTime());
+                        if (result < 0)
+                            return CompareResult.Negative;
+                        else if (result == 0)
+                            return CompareResult.Zero;
+                        else
+                            return CompareResult.Positive;
+                    }
+                }
+            }
+            else
+            {
+                var sourceInfo = new FileInfo(catalog);
+                var destinationInfo = new FileInfo(destination);
+
+                int result = sourceInfo.LastWriteTimeUtc.CompareTo(destinationInfo.LastWriteTimeUtc);
+                if (result < 0)
+                    return CompareResult.Negative;
+                else if (result == 0)
+                    return CompareResult.Zero;
+                else
+                    return CompareResult.Positive;
+            }
+
+            return CompareResult.NotFound;
+        }
+
+        private static void BackupCatalog(ILightroomCatalog lightroomCatalog, string destination)
+        {
+            if (_backupSettings.Compress)
+            {
+                try
+                {
+                    Log.Information($"Creating zip archive for { lightroomCatalog.FileName }.");
+
+                    using var zipToCreate = new FileStream(destination, FileMode.Create);
+                    using var archive = new ZipArchive(zipToCreate, ZipArchiveMode.Create);
+                    archive.CreateEntryFromFile(lightroomCatalog.PathToFile, lightroomCatalog.FileName);
+                }
+                catch (Exception)
+                {
+                    Log.Error($"Error while creating zip archive for { lightroomCatalog.FileName }.");
+                }
+            }
+            else
+            {
+                try
+                {
+                    Log.Information($"Copying { lightroomCatalog.FileName }.");
+                    File.Copy(lightroomCatalog.PathToFile, destination);
+                }
+                catch (Exception)
+                {
+                    Log.Error($"Error while copying { lightroomCatalog.FileName }.");
+                }
             }
         }
+
+        private static string GetHashSha256(string filename)
+        {
+            using FileStream stream = File.OpenRead(filename);
+            return BitConverter.ToString(_sha256.ComputeHash(stream)).Replace("-", "").ToLowerInvariant();
+        }
+
+        private static string GetHashSha256(Stream stream)
+        {
+            return BitConverter.ToString(_sha256.ComputeHash(stream)).Replace("-", "").ToLowerInvariant();
+        }
+    }
+
+    public enum CompareResult
+    {
+        Negative,
+        Zero,
+        Positive,
+        NotFound,
     }
 }

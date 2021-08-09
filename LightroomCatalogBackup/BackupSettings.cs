@@ -11,6 +11,7 @@ namespace LightroomCatalogBackup
     public class BackupSettings : IBackupSettings
     {
         public string GlobalBackupDirectory { get; set; }
+        public bool Compress { get; set; } = false;
         public List<LightroomCatalog> Catalogs { get; set; } = new(4);
 
         public BackupSettings()
