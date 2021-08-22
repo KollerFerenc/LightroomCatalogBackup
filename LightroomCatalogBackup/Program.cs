@@ -19,6 +19,21 @@ namespace LightroomCatalogBackup
         {
             ConfigureLogger();
 
+            if (args.Length == 1 && args[0].ToUpper() == "--SAMPLE")
+            {
+                Log.Information("Saving sample config.");
+                string path = Path.Combine(Environment.CurrentDirectory, "sample_config-" + DateTime.Now.ToString("s") + ".json");
+                Log.Information($"Sample config: { path }");
+
+                using (StreamWriter writer = new StreamWriter(path))
+                {
+                    string json = JsonSerializer.Serialize(BackupSettings.GetSampleBackupSettings(), _jsonSerializerOptions);
+                    writer.Write(json);
+                }
+
+                Exit(0);
+            }
+
             ImportSettings();
             StartBackupProcedure();
 

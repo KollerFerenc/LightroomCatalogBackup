@@ -45,6 +45,28 @@ namespace LightroomCatalogBackup
 
             return result;
         }
+
+        public static BackupSettings GetSampleBackupSettings()
+        {
+            var output = new BackupSettings();
+
+            try
+            {
+                output.Compress = true;
+                output.GlobalBackupDirectory = Environment.GetFolderPath(Environment.SpecialFolder.MyDocuments);
+                output.Catalogs.Add(new LightroomCatalog()
+                {
+                    PathToFile = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.MyPictures), "Lightroom", "Lightroom Catalog.lrcat"),
+                });
+            }
+            catch (Exception)
+            {
+                return new BackupSettings();
+            }
+            
+
+            return output;
+        }
     }
 
     public enum BackupSettingsValidationResult
