@@ -67,6 +67,17 @@ namespace LightroomCatalogBackup
 
             return output;
         }
+
+        public static BackupSettings GetBackupSettings(IBackupSettings backupSettings)
+        {
+            BackupSettings output = new();
+
+            output.GlobalBackupDirectory = backupSettings.GlobalBackupDirectory;
+            output.Compress = backupSettings.Compress;
+            output.Catalogs = backupSettings.Catalogs;
+
+            return output;
+        }
     }
 
     public enum BackupSettingsValidationResult
