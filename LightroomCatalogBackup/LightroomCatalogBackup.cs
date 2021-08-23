@@ -16,6 +16,7 @@ namespace LightroomCatalogBackup
     {
         private static readonly SHA256 _sha256 = SHA256.Create();
         private static readonly JsonSerializerOptions _jsonSerializerOptions = new() { WriteIndented = true };
+        private static readonly string _pathToConfig = Path.Combine(Program.baseDirectory, @"config.json");
 
         private bool _settingsImported;
         private IBackupSettings _backupSettings;
@@ -41,8 +42,7 @@ namespace LightroomCatalogBackup
         {
             Log.Information("Initialize config.");
 
-            string pathToConfig = Path.Combine(Program.baseDirectory, @"config.json");
-            if (File.Exists(pathToConfig))
+            if (File.Exists(_pathToConfig))
             {
                 if (!force)
                 {
@@ -55,13 +55,13 @@ namespace LightroomCatalogBackup
             _backupSettings.GlobalBackupDirectory = globalBackupDirectory;
             _backupSettings.Compress = compress;
 
-            Log.Information("Saving config.");
-            using (StreamWriter writer = new StreamWriter(pathToConfig, append: false))
+            if (_backupSettings.Validate() == BackupSettingsValidationResult.InvalidGlobalBackupDirectory)
             {
-                string json = JsonSerializer.Serialize(
-                    BackupSettings.GetBackupSettings(_backupSettings), _jsonSerializerOptions);
-                writer.Write(json);
+                Log.Fatal("Invalid global backup directory.");
+                Program.Exit(-6);
             }
+
+            SaveConfig();
         }
 
         [Command(
@@ -77,11 +77,18 @@ namespace LightroomCatalogBackup
                 ImportSettings();
             }
 
-            if (!File.Exists(pathToCatalog))
-                throw new FileNotFoundException(nameof(pathToCatalog));
+            var catalog = new LightroomCatalog(pathToCatalog);
+
+            if (!catalog.Validate())
+            {
+                Log.Fatal("Catalog not valid.");
+                Program.Exit(-5);
+            }
 
             Log.Information("Added catalog.");
-            _backupSettings.Catalogs.Add(new LightroomCatalog(pathToCatalog));
+            _backupSettings.Catalogs.Add(catalog);
+
+            SaveConfig();
         }
 
         [Command(
@@ -199,9 +206,8 @@ namespace LightroomCatalogBackup
         {
             if (toFile)
             {
-                Log.Information("Saving sample config.");
-                string path = Path.Combine(Environment.CurrentDirectory, "sample_config-" + DateTime.Now.ToString("s") + ".json");
-                Log.Debug($"Sample config: { path }");
+                string path = Path.Combine(Environment.CurrentDirectory, "sample_config-" + DateTime.Now.ToString("g").Replace(" ", "").Replace(":", "") + ".json");
+                Log.Information($"Saving sample config to { path }.");
 
                 using (StreamWriter writer = new StreamWriter(path))
                 {
@@ -211,23 +217,21 @@ namespace LightroomCatalogBackup
             }
             else
             {
-                Log.Information("Writing sample config to console.");
+                Log.Debug("Writing sample config to console.");
                 Console.WriteLine(JsonSerializer.Serialize(BackupSettings.GetSampleBackupSettings(), _jsonSerializerOptions));
             }
         }
 
         private void ImportSettings()
         {
-            string pathToConfig = Path.Join(Program.baseDirectory, @"config.json");
-
-            if (!File.Exists(pathToConfig))
+            if (!File.Exists(_pathToConfig))
             {
                 Log.Fatal("config.json not found.");
                 Program.Exit(-1);
             }
 
-            Log.Information("Loading config.json.");
-            using (StreamReader reader = new(pathToConfig))
+            Log.Debug("Loading config.json.");
+            using (StreamReader reader = new(_pathToConfig))
             {
                 try
                 {
@@ -240,7 +244,7 @@ namespace LightroomCatalogBackup
                 }
             }
 
-            Log.Information("Validating config.");
+            Log.Debug("Validating config.");
             if (_backupSettings.Validate() == BackupSettingsValidationResult.InvalidGlobalBackupDirectory)
             {
                 Log.Fatal("Global backup directory does not exist.");
@@ -248,6 +252,17 @@ namespace LightroomCatalogBackup
             }
 
             _settingsImported = true;
+        }
+
+        private void SaveConfig()
+        {
+            Log.Information("Saving config.");
+            using (StreamWriter writer = new StreamWriter(_pathToConfig, append: false))
+            {
+                string json = JsonSerializer.Serialize(
+                    BackupSettings.GetBackupSettings(_backupSettings), _jsonSerializerOptions);
+                writer.Write(json);
+            }
         }
 
         private string GetDestinationFile(ILightroomCatalog lightroomCatalog)
