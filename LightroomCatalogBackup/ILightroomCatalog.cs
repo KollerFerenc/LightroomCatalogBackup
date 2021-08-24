@@ -1,6 +1,8 @@
-﻿namespace LightroomCatalogBackup
+﻿using System;
+
+namespace LightroomCatalogBackup
 {
-    public interface ILightroomCatalog
+    public interface ILightroomCatalog : IEquatable<ILightroomCatalog>
     {
         string CustomBackupDirectory { get; set; }
         [System.Text.Json.Serialization.JsonIgnore]
@@ -8,7 +10,5 @@
         [System.Text.Json.Serialization.JsonIgnore]
         bool HasCustomBackupDirectory { get; }
         string PathToFile { get; set; }
-
-        bool Validate();
     }
 }

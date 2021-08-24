@@ -17,7 +17,7 @@ namespace LightroomCatalogBackup
                 .UseDefaultMiddleware();
             appRunner.Run(args);
 
-            Exit(0);
+            Exit(ExitCode.Default);
         }
 
         private static void ConfigureLogger()
@@ -30,10 +30,19 @@ namespace LightroomCatalogBackup
                 .CreateLogger();
         }
 
-        internal static void Exit(int exitCode)
+        internal static void Exit(ExitCode exitCode)
         {
             Log.CloseAndFlush();
-            Environment.Exit(exitCode);
+            Environment.Exit((int)exitCode);
         }
+    }
+
+    public enum ExitCode
+    {
+        Default = 0,
+        ConfigNotFound = -1,
+        ConfigLoadError = -2,
+        ValidationError = -3,
+        ConfigExists = -4,
     }
 }

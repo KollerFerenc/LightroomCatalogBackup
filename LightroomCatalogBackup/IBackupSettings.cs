@@ -7,7 +7,5 @@ namespace LightroomCatalogBackup
         List<LightroomCatalog> Catalogs { get; set; }
         string GlobalBackupDirectory { get; set; }
         bool Compress { get; set; }
-
-        BackupSettingsValidationResult Validate();
     }
 }

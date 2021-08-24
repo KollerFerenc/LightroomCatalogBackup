@@ -47,7 +47,7 @@ namespace LightroomCatalogBackup
                 if (!force)
                 {
                     Log.Fatal("Config already exists.");
-                    Program.Exit(-4);
+                    Program.Exit(ExitCode.ConfigExists);
                 }
             }
 
@@ -55,12 +55,21 @@ namespace LightroomCatalogBackup
             _backupSettings.GlobalBackupDirectory = globalBackupDirectory;
             _backupSettings.Compress = compress;
 
-            if (_backupSettings.Validate() == BackupSettingsValidationResult.InvalidGlobalBackupDirectory)
+            var settingsValidator = new BackupSettingsValidator();
+            var result = settingsValidator.Validate(_backupSettings);
+            
+            if (!result.IsValid)
             {
-                Log.Fatal("Invalid global backup directory.");
-                Program.Exit(-6);
+                Log.Fatal("Could not initialize config.");
+                foreach (var error in result.Errors)
+                {
+                    Log.Fatal($"{ error.ErrorMessage }\nProperty: { error.PropertyName}, Value: { error.AttemptedValue }");
+                }
+
+                Program.Exit(ExitCode.ValidationError);
             }
 
+            _settingsImported = true;
             SaveConfig();
         }
 
@@ -79,10 +88,18 @@ namespace LightroomCatalogBackup
 
             var catalog = new LightroomCatalog(pathToCatalog);
 
-            if (!catalog.Validate())
+            var catalogValidator = new LightroomCatalogValidator();
+            var result = catalogValidator.Validate(catalog);
+
+            if (!result.IsValid)
             {
-                Log.Fatal("Catalog not valid.");
-                Program.Exit(-5);
+                Log.Fatal("Could not add catalog.");
+                foreach (var error in result.Errors)
+                {
+                    Log.Fatal($"{ error.ErrorMessage }\nProperty: { error.PropertyName}, Value: { error.AttemptedValue }");
+                }
+
+                Program.Exit(ExitCode.ValidationError);
             }
 
             Log.Information("Added catalog.");
@@ -222,12 +239,61 @@ namespace LightroomCatalogBackup
             }
         }
 
+        [Command(
+            Name = "removeDuplicates",
+            Description = "Remove duplicate catalogs from config.")]
+        public void RemoveDuplicates(
+            [Option(
+                LongName = "dryRun",
+                Description= "Dry run of backup procedure.",
+                BooleanMode=BooleanMode.Implicit)]
+            bool dryRun)
+        {
+            if (!_settingsImported)
+            {
+                ImportSettings();
+            }
+
+            List<int> hashCodes = new List<int>(_backupSettings.Catalogs.Count);
+            foreach (var item in _backupSettings.Catalogs)
+            {
+                hashCodes.Add(item.GetHashCode());
+            }
+
+            var distinct = _backupSettings.Catalogs.Distinct().ToList();
+
+            if (_backupSettings.Catalogs.Count - distinct.Count > 0)
+            {
+                if (dryRun)
+                {
+                    Log.Information($"[DRY] Removing { _backupSettings.Catalogs.Count - distinct.Count } duplicate(s).");
+                }
+                else
+                {
+                    Log.Information($"Removing { _backupSettings.Catalogs.Count - distinct.Count } duplicate(s).");
+                    _backupSettings.Catalogs = distinct;
+                    SaveConfig();
+                }
+            }
+            else
+            {
+                if (dryRun)
+                {
+                    Log.Information("[DRY] No duplicates found.");
+                }
+                else
+                {
+                    Log.Information("No duplicates found.");
+                }
+            }
+        }
+
         private void ImportSettings()
         {
             if (!File.Exists(_pathToConfig))
             {
                 Log.Fatal("config.json not found.");
-                Program.Exit(-1);
+                Program.Exit(ExitCode.ConfigNotFound);
             }
 
             Log.Debug("Loading config.json.");
@@ -240,15 +306,23 @@ namespace LightroomCatalogBackup
                 catch (Exception)
                 {
                     Log.Fatal("Could not load config.json.");
-                    Program.Exit(-2);
+                    Program.Exit(ExitCode.ConfigLoadError);
                 }
             }
 
             Log.Debug("Validating config.");
-            if (_backupSettings.Validate() == BackupSettingsValidationResult.InvalidGlobalBackupDirectory)
+            var settingsValidator = new BackupSettingsValidator();
+            var result = settingsValidator.Validate(_backupSettings);
+
+            if (!result.IsValid)
             {
-                Log.Fatal("Global backup directory does not exist.");
-                Program.Exit(-3);
+                Log.Fatal("Config not valid.");
+                foreach (var error in result.Errors)
+                {
+                    Log.Fatal($"{ error.ErrorMessage }\nProperty: { error.PropertyName}, Value: { error.AttemptedValue }");
+                }
+
+                Program.Exit(ExitCode.ValidationError);
             }
 
             _settingsImported = true;

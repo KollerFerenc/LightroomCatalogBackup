@@ -24,28 +24,6 @@ namespace LightroomCatalogBackup
             GlobalBackupDirectory = globalBackupDirectory;
         }
 
-        public BackupSettingsValidationResult Validate()
-        {
-            if (!Directory.Exists(GlobalBackupDirectory))
-            {
-                return BackupSettingsValidationResult.InvalidGlobalBackupDirectory;
-            }
-
-            var result = BackupSettingsValidationResult.Valid;
-
-            foreach (var catalog in Catalogs)
-            {
-                if (!catalog.Validate())
-                {
-                    Log.Warning($"Validation failed. Removing { catalog.FileName } from list.");
-                    Catalogs.Remove(catalog);
-                    result = BackupSettingsValidationResult.InvalidLightroomCatalog;
-                }
-            }
-
-            return result;
-        }
-
         public static BackupSettings GetSampleBackupSettings()
         {
             var output = new BackupSettings();
@@ -78,12 +56,5 @@ namespace LightroomCatalogBackup
 
             return output;
         }
-    }
-
-    public enum BackupSettingsValidationResult
-    {
-        Valid,
-        InvalidGlobalBackupDirectory,
-        InvalidLightroomCatalog,
     }
 }
